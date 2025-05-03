@@ -1,0 +1,107 @@
+#+TITLE: Site Safety Violation Detector
+#+AUTHOR: Eid Alkhaldi, Ph.D.
+#+OPTIONS: toc:t num:t
+
+* Overview
+    This repository implements an image classification pipeline designed to detect site safety violations from image data. The model is built on a pretrained EfficientNet-B0 architecture using PyTorch and timm. It supports:
+
+    Data loading with training-time augmentation
+
+    Model training and evaluation
+
+    Batch inference on image folders
+
+    Saving/loading model checkpoints
+
+    Plotting training curves
+
+This project is intended for research and educational purposes.
+
+* Directory Structure
+    #+BEGIN_SRC
+    .
+    ├── src/
+    │ ├── data_loader.py # Dataset preparation and augmentation
+    │ ├── model.py # EfficientNet-based classifier
+    │ ├── evaluate.py # Model evaluation on test set
+    │ ├── detect.py # Batch inference on images
+    │ └── utils.py # Plotting and model saving
+    ├── data/
+    │ └── Worksite-Safety-Monitoring-Dataset/
+    │ ├── train/
+    │ ├── valid/
+    │ └── test/
+    ├── best_model.pth # Trained model checkpoint (optional)
+    ├── README.org # This file
+    └── requirements.txt # Dependency list
+    #+END_SRC
+
+* Installation
+
+    Clone the repository:
+    #+BEGIN_SRC bash
+    git clone https://github.com/alkhaldieid/site_safety_violation_detector.git
+    cd site_safety_violation_detector
+    #+END_SRC
+
+    (Optional but recommended) Create a virtual environment:
+    #+BEGIN_SRC bash
+    conda create -n safety_detector python=3.9 -y
+    conda activate safety_detector
+    #+END_SRC
+
+    Install dependencies:
+    #+BEGIN_SRC bash
+    pip install -r requirements.txt
+    #+END_SRC
+
+    Dataset Structure
+    The dataset should be organized as:
+    #+BEGIN_SRC
+    data/Worksite-Safety-Monitoring-Dataset/
+    ├── train/
+    │ ├── violation/
+    │ └── no_violation/
+    ├── valid/
+    │ ├── violation/
+    │ └── no_violation/
+    └── test/
+    ├── violation/
+    └── no_violation/
+    #+END_SRC
+
+You can change the path in src/evaluate.py or src/detect.py as needed.
+
+* Usage
+
+** Evaluate the model:
+From the root directory:
+#+BEGIN_SRC bash
+python -m src.evaluate
+#+END_SRC
+
+This loads the test set and prints a classification report.
+
+** Predict images in a folder:
+#+BEGIN_SRC bash
+python -m src.detect /path/to/folder
+#+END_SRC
+
+If no folder is given, defaults to the current working directory. Prints predicted labels and probabilities.
+
+* Training
+    (A training script is not included. You can extend this project by writing src/train.py and integrating model saving and validation logic.)
+
+    Customization
+
+    Replace EfficientNet-B0 with other timm models in src/model.py
+
+    Adjust augmentation in src/data_loader.py
+
+    Add support for multi-class classification by modifying the classifier layer and loss function
+
+* Disclaimer
+    This software is provided "as is", without warranty of any kind. The author shall not be held liable for any damage or misuse resulting from the use of this software. Use at your own risk, especially in safety-critical or regulatory-compliant environments.
+
+* License
+    This project is released under the MIT License.
