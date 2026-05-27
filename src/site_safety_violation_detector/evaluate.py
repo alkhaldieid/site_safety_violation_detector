@@ -113,6 +113,48 @@ def load_checkpoint(
     )
 
 
+def _build_misclassified_lists(
+    *,
+    sample_paths: list[str],
+    y_true,
+    y_pred,
+    y_prob,
+    class_names: list[str],
+    threshold: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Construct misclassified / FP / FN records keyed by image path.
+
+    ``sample_paths`` may be shorter than ``y_true`` (e.g. when the dataset
+    object doesn't expose ``samples``). In that case the path is recorded
+    as ``None`` rather than failing — the diagnostic is still useful.
+    """
+    misclassified: list[dict[str, Any]] = []
+    false_positives: list[dict[str, Any]] = []
+    false_negatives: list[dict[str, Any]] = []
+    for idx in range(len(y_true)):
+        true_idx = int(y_true[idx])
+        pred_idx = int(y_pred[idx])
+        if true_idx == pred_idx:
+            continue
+        record = {
+            "path": sample_paths[idx] if idx < len(sample_paths) else None,
+            "true_label_index": true_idx,
+            "true_label": class_names[true_idx] if true_idx < len(class_names) else str(true_idx),
+            "predicted_label_index": pred_idx,
+            "predicted_label": class_names[pred_idx] if pred_idx < len(class_names) else str(pred_idx),
+            "probability": float(y_prob[idx]),
+            "threshold": threshold,
+        }
+        misclassified.append(record)
+        # Convention: positive class = index 1 (matches ImageFolder
+        # alphabetical ordering of "no_violation" < "violation").
+        if pred_idx == 1 and true_idx == 0:
+            false_positives.append(record)
+        elif pred_idx == 0 and true_idx == 1:
+            false_negatives.append(record)
+    return misclassified, false_positives, false_negatives
+
+
 @torch.no_grad()
 def _collect_predictions(
     model: nn.Module,
@@ -190,12 +232,28 @@ def evaluate_checkpoint(
         digits=4,
     )
 
+    # Per-sample paths — the test loader is constructed with shuffle=False,
+    # so dataset.samples is in the same order as the predictions we just
+    # collected. This lets us surface concrete misclassified examples.
+    test_dataset = bundle.test_loader.dataset
+    sample_paths = [str(Path(p)) for p, _ in getattr(test_dataset, "samples", [])]
+    misclassified, false_positives, false_negatives = _build_misclassified_lists(
+        sample_paths=sample_paths,
+        y_true=test_y.astype(int),
+        y_pred=y_pred,
+        y_prob=test_p,
+        class_names=loaded.class_names,
+        threshold=float(threshold),
+    )
+
     summary = {
         "architecture": loaded.architecture,
         "checkpoint": str(checkpoint_path),
         "threshold": threshold,
         "test_metrics": test_metrics.to_dict(),
         "class_names": loaded.class_names,
+        "num_test_samples": int(test_y.size),
+        "num_misclassified": len(misclassified),
         "evaluated_at": utc_now_iso(),
     }
     with (out_dir / "test_metrics.json").open("w") as fh:
@@ -214,8 +272,21 @@ def evaluate_checkpoint(
             fh,
             indent=2,
         )
+    # Per-sample error analysis artifacts.
+    with (out_dir / "misclassified.json").open("w") as fh:
+        json.dump(misclassified, fh, indent=2)
+    with (out_dir / "false_positives.json").open("w") as fh:
+        json.dump(false_positives, fh, indent=2)
+    with (out_dir / "false_negatives.json").open("w") as fh:
+        json.dump(false_negatives, fh, indent=2)
 
     LOGGER.info("Test metrics: %s", json.dumps(test_metrics.to_dict(), indent=2))
+    LOGGER.info(
+        "Misclassified: %d (FP=%d, FN=%d)",
+        len(misclassified),
+        len(false_positives),
+        len(false_negatives),
+    )
     LOGGER.info("Wrote evaluation artifacts to %s", out_dir)
     return summary
 

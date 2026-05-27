@@ -40,6 +40,7 @@ from .config import Config, OptimConfig, config_to_dict, load_config, save_confi
 from .data import DataBundle, build_dataloaders, compute_positive_class_weight
 from .metrics import BinaryMetrics, compute_binary_metrics, find_best_threshold
 from .models import build_model
+from .provenance import collect_environment_info
 from .utils import (
     count_parameters,
     ensure_dir,
@@ -429,6 +430,7 @@ def train_one_model(
         "architecture": cfg.model.architecture,
         "class_names": class_names,
         "class_to_idx": bundle.class_to_idx,
+        "train_class_counts": bundle.train_class_counts,
         "image_size": cfg.data.image_size,
         "threshold": final_threshold,
         "best_epoch": best_epoch,
@@ -436,10 +438,13 @@ def train_one_model(
         "params_total": total_params,
         "params_trainable": trainable_params,
         "config": config_to_dict(cfg),
+        "seed": cfg.runtime.seed,
+        "device": device,
         "git_commit": git_commit(),
         "created_at": utc_now_iso(),
         "rationale": rationale,
         "checkpoint": str(checkpoint_path),
+        "environment": collect_environment_info(),
     }
     with metadata_path.open("w") as fh:
         json.dump(metadata, fh, indent=2)

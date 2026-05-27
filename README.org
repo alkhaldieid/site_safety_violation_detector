@@ -82,10 +82,11 @@
   pip install -e ".[dev,plot]"
   #+END_SRC
 
-  ~-e .~ installs the package in editable mode and exposes four
+  ~-e .~ installs the package in editable mode and exposes five
   console scripts: ~safety-train~, ~safety-evaluate~, ~safety-infer~,
-  ~safety-sweep~. The ~dev~ extra adds pytest and ruff; ~plot~ adds
-  matplotlib.
+  ~safety-sweep~, ~safety-dataset~. The ~dev~ extra adds pytest and
+  ruff; ~plot~ adds matplotlib; ~research~ adds ~imagehash~ for
+  optional perceptual-near-duplicate detection.
 
 * Configuration
 
@@ -302,14 +303,184 @@
   are trained, the winner is the one with the highest validation F1
   (ties broken by validation loss).
 
-  The decision is recorded in ~models/best_model_metadata.json~:
-  the metrics of every candidate, the chosen metric, the tie-breaker,
-  and a short rationale string. The test set is only evaluated on the
+  The decision is recorded in ~models/best_model_metadata.json~: the
+  metrics of every candidate, the chosen metric, the tie-breaker, and
+  a short rationale string. The test set is only evaluated on the
   winning model, after selection, so the test metrics are not used to
   pick the model.
 
   This means the architecture I ship is the one that measured best on
   this dataset under this protocol — not the one that's most popular.
+
+  *Important caveat.* When the sweep is run with a single random seed,
+  the selected model is the best one *under that particular dataset
+  split, configuration, and seed*. A single run cannot demonstrate that
+  the winner is generally superior; another seed could re-order the
+  candidates within their noise floor. To estimate seed variance, run:
+
+  #+BEGIN_SRC bash
+  safety-sweep --config configs/model_sweep.yaml --seeds 42 123 999
+  #+END_SRC
+
+  The sweep then trains every architecture once per seed, reports
+  ~mean_val_f1 ± std_val_f1~ across seeds, and selects the architecture
+  with the best aggregated mean. The single checkpoint that ships in
+  ~models/best_model.pt~ is the best individual seed of the winning
+  architecture, but the metadata records the full mean/std table so the
+  decision is auditable.
+
+* Research Validity and Reproducibility
+
+  This section is meant to make the methodology defensible for academic
+  review.
+
+** Dataset source and expected structure
+   The pipeline targets a worksite safety-monitoring dataset organised
+   as an ImageFolder with two classes (~violation~, ~no_violation~) and
+   three splits (~train~, ~valid~, ~test~) — see the *Dataset layout*
+   section above. The dataset itself is not redistributed by this
+   repository; point ~data.root~ at the local copy.
+
+** Class distribution reporting
+   ~safety-dataset~ writes ~reports/dataset_summary.json~ containing
+   per-split / per-class counts and class-balance ratios. Training also
+   logs the train-class counts and saves them inside the checkpoint
+   metadata under ~train_class_counts~. Use these to report the
+   imbalance level alongside accuracy and F1.
+
+** Split strategy and leakage risks
+   Splits are taken as-is from the dataset directory layout — the
+   pipeline does *not* re-split. This makes the split reproducible
+   across machines without storing index files, but it also means
+   leakage is the dataset author's responsibility.
+
+   To check for leakage in the local copy, run:
+
+   #+BEGIN_SRC bash
+   safety-dataset --check-duplicates
+   #+END_SRC
+
+   This computes SHA1 over every image and writes
+   ~reports/duplicates.json~ with two sections:
+   - ~cross_split~ — files that are byte-identical across two or more
+     splits. Any entry here is a *leakage event*: a test image appears
+     in training data and inflates test metrics.
+   - ~within_split~ — files duplicated inside a single split. These
+     don't cause leakage but distort class balance.
+
+   Add ~--check-near-duplicates~ to also run perceptual-hash matching
+   (requires the optional ~imagehash~ extra: ~pip install -e ".[research]"~).
+   Near-duplicates are softer evidence of leakage — e.g. consecutive
+   frames from the same video — but they are worth inspecting.
+
+** Validation set: used for model selection only
+   The validation split decides every tunable choice during training:
+   when to stop (early stopping), the decision threshold (~eval.search_threshold_on_val~),
+   and which architecture wins (in the sweep). Re-using the validation
+   split for these decisions is appropriate; it does not bias the test
+   metric.
+
+** Test set: held out for final reporting only
+   The test split is never looked at during training, threshold tuning,
+   or model selection. ~safety-evaluate~ loads the chosen checkpoint
+   and scores the test split once, with the threshold already fixed.
+   Test metrics are written to ~reports/<arch>_test/test_metrics.json~
+   alongside the classification report and confusion matrix, and are
+   distinct from the validation metrics stored on the checkpoint.
+
+** Random seed control
+   ~set_seed~ seeds Python's ~random~, NumPy, and PyTorch (CPU and CUDA)
+   from ~runtime.seed~ before every training run, and sets
+   ~torch.backends.cudnn.deterministic=True~ with
+   ~torch.backends.cudnn.benchmark=False~. The seed is saved in
+   checkpoint metadata so any reported number can be reproduced.
+
+   Note that bit-exact reproducibility on GPUs is *not* guaranteed
+   across CUDA versions, driver versions, or hardware. The pipeline
+   aims for deterministic behaviour given fixed CUDA/cuDNN versions —
+   record the environment (next item) so future runs can be matched.
+
+** Hardware and software reproducibility
+   Every checkpoint and sweep report embeds an ~environment~ block
+   containing:
+   - Python version and executable path
+   - Platform / machine / processor / OS
+   - CPU count and hostname
+   - Versions of every direct dependency (torch, torchvision, timm,
+     scikit-learn, numpy, Pillow, PyYAML, tqdm)
+   - CUDA availability, device name, CUDA version, cuDNN version
+   - MPS availability (Apple Silicon)
+
+   Combined with the git commit (also embedded) this is sufficient to
+   reconstruct the exact code + environment that produced a result.
+
+** Metric choice and limitations
+   The default selection metric is ~val_f1~, with ~val_loss~ as the
+   tie-breaker. F1 is reported because accuracy is misleading under
+   class imbalance, and ROC-AUC alone can over-credit models that
+   discriminate but predict the wrong calibration. The pipeline
+   additionally reports precision, recall, ROC-AUC and PR-AUC; PR-AUC
+   is particularly informative when the positive class is rare.
+
+   Caveats every reader should know:
+   - F1 depends on the decision threshold; the pipeline tunes the
+     threshold on the validation split and freezes it before scoring
+     the test split.
+   - ROC-AUC and PR-AUC are ~None~ in reports when only one class is
+     present in the evaluated batch (the metric is undefined there).
+   - A single run's F1 is a point estimate. Use ~--seeds A B C~ to
+     report ~mean ± std~ before drawing conclusions across
+     architectures.
+
+** Repeated runs across multiple seeds
+   Multi-seed reporting is built in:
+
+   #+BEGIN_SRC bash
+   safety-sweep --config configs/model_sweep.yaml --seeds 42 123 999
+   #+END_SRC
+
+   Each architecture is trained once per seed; the sweep writes:
+   - ~reports/model_comparison.json~ — full aggregated + per-run report,
+     including a ~rationale~ string that names the seeds used.
+   - ~reports/model_comparison.csv~ — one row per architecture (means
+     and stds across seeds).
+   - ~reports/model_comparison_per_run.csv~ — one row per (arch, seed)
+     for inspection.
+
+   The shipped checkpoint is the best individual-seed checkpoint of
+   the winning architecture; the metadata records both the aggregated
+   ~mean ± std~ and which seed produced it.
+
+** Per-sample error analysis
+   ~safety-evaluate~ writes three additional files under
+   ~reports/<arch>_test/~:
+   - ~misclassified.json~ — every misclassified test image with its
+     true label, predicted label, and probability.
+   - ~false_positives.json~ — predicted ~violation~, actually ~no_violation~.
+   - ~false_negatives.json~ — predicted ~no_violation~, actually ~violation~.
+
+   In a safety-critical setting, false negatives (missed violations)
+   are typically more costly than false positives. Reviewing
+   ~false_negatives.json~ by hand is the single most useful sanity
+   check before claiming the model is "good enough".
+
+** Ethical and safety limitations
+   This is a *binary image classifier*. It does not localise
+   violations, identify which piece of equipment is missing, or assign
+   responsibility. It is not a substitute for a trained safety
+   officer.
+
+   Numbers reported on the bundled dataset are not a guarantee of
+   field performance: cameras, lighting, occlusion, and demographic
+   distribution of subjects all matter. Deployment in any safety- or
+   regulatory-critical setting requires re-evaluation on imagery from
+   the deployment environment and explicit, documented review of false
+   negatives.
+
+   The model can encode biases present in the training data. Before
+   deployment, evaluate per-subgroup performance (e.g. site, time of
+   day, demographic) where the data permits and report the worst-case
+   metric, not just the average.
 
 * Disclaimer
 

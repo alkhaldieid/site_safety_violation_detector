@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "site-safety-violation-detector"
-version = "0.2.0"
+version = "0.3.0"
 description = "Production-grade PyTorch pipeline for detecting safety violations from worksite images."
 readme = { file = "README.org", content-type = "text/plain" }
 requires-python = ">=3.9"
@@ -43,6 +43,9 @@ dev = [
 plot = [
     "matplotlib>=3.5",
 ]
+research = [
+    "imagehash>=4.3",
+]
 
 [project.urls]
 Homepage = "https://github.com/alkhaldieid/site_safety_violation_detector"
@@ -53,6 +56,7 @@ safety-train = "site_safety_violation_detector.train:main"
 safety-evaluate = "site_safety_violation_detector.evaluate:main"
 safety-infer = "site_safety_violation_detector.infer:main"
 safety-sweep = "site_safety_violation_detector.sweep:main"
+safety-dataset = "site_safety_violation_detector.dataset_summary:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
