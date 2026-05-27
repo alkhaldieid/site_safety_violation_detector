@@ -4,34 +4,21 @@
 
 * Overview
 
-  This repository implements a production-grade image-classification pipeline
-  for detecting safety violations from worksite images. It is built on
-  PyTorch + [[https://github.com/huggingface/pytorch-image-models][timm]] and
-  ships with:
+  Binary image classifier for safety violations on worksite images
+  (violation / no_violation), built with PyTorch and timm.
 
-  - A reproducible, configuration-driven training loop with early stopping,
-    class-imbalance handling, deterministic seeding, and CPU / CUDA / Apple
-    MPS device selection.
-  - A multi-architecture model sweep that trains several candidates on
-    identical data splits and selects the best one by validation F1 (with
-    validation loss as the tie-breaker).
-  - Test-set evaluation with optional threshold tuning, classification
-    reports, and confusion-matrix data saved to disk.
-  - Single-image and folder inference that handles corrupt images
-    gracefully and loads its own preprocessing from saved metadata.
-  - A pip-installable package with console scripts and a pytest test
-    suite that runs on synthetic data.
+  The earlier version of this repo was a notebook prototype with a
+  single EfficientNet-B0 and hard-coded paths. I rewrote it as a small
+  package so I can retrain, swap architectures, and re-evaluate without
+  going back into the notebooks.
 
-* Problem statement
-
-  The model performs *binary* image classification: ~violation~ vs.
-  ~no_violation~ on individual frames from a worksite-safety dataset.
-
-  The motivation is the same as the original notebook prototype: flag
-  worksite images where required safety equipment / behaviour is
-  missing. This refactor brings the prototype to a state where another
-  engineer can reproduce, retrain, and re-evaluate the system without
-  guessing hidden paths or running notebook cells.
+  What it does:
+  - Loads images with ImageFolder and the usual ImageNet preprocessing.
+  - Trains a timm backbone with a small MLP head that returns logits.
+  - Optionally trains several candidate architectures and picks the
+    best one on validation F1.
+  - Evaluates on a held-out test split and saves the metrics.
+  - Runs inference on a single image or a folder.
 
 * Repository layout
 
@@ -42,44 +29,29 @@
     requirements.txt
     requirements-dev.txt
     configs/
-      default.yaml             # single-model training defaults
-      model_sweep.yaml         # multi-model sweep defaults
+      default.yaml             # single-model training
+      model_sweep.yaml         # multi-model sweep
     src/
       site_safety_violation_detector/
-        __init__.py
-        config.py              # YAML / CLI override configuration
-        data.py                # ImageFolder loaders, transforms, layout validation
-        models.py              # SafetyClassifier (timm + MLP head) — returns LOGITS
-        metrics.py             # accuracy/precision/recall/F1/ROC-AUC/PR-AUC + threshold search
-        train.py               # single-model training loop + safety-train CLI
-        evaluate.py            # test-set evaluation + safety-evaluate CLI
-        infer.py               # single-image / folder inference + safety-infer CLI
-        sweep.py               # multi-model training + selection + safety-sweep CLI
-        utils.py               # logging, seeding, device, git, param counting
-    scripts/
-      train.py                 # thin wrappers around the package CLIs so you can
-      evaluate.py              # run them from a fresh checkout without installing
-      infer.py
-      train_model_sweep.py
-    tests/
-      conftest.py              # synthetic ImageFolder dataset fixture
-      test_config.py
-      test_data.py
-      test_models.py
-      test_metrics.py
-      test_infer.py
-    notebooks/
-      README.org               # explains: exploratory, not production
-      *.ipynb                  # original exploratory notebooks
-    models/                    # trained checkpoints + metadata (gitignored)
-      .gitkeep
-    reports/                   # metrics, classification reports, history (gitignored)
-      .gitkeep
+        config.py              # YAML + CLI override config
+        data.py                # ImageFolder loaders + transforms
+        models.py              # timm backbone + MLP head (logits)
+        metrics.py             # accuracy / precision / recall / F1 / AUCs
+        train.py               # single-model training (safety-train)
+        evaluate.py            # test-set evaluation (safety-evaluate)
+        infer.py               # single image / folder inference (safety-infer)
+        sweep.py               # multi-model training + selection (safety-sweep)
+        utils.py               # logging, seeding, device, git
+    scripts/                   # thin wrappers around the CLIs above
+    tests/                     # pytest tests on synthetic data
+    notebooks/                 # original exploratory notebooks
+    models/                    # checkpoints + metadata (gitignored)
+    reports/                   # metrics + history (gitignored)
   #+END_SRC
 
 * Dataset layout
 
-  The pipeline expects the standard ~ImageFolder~ layout:
+  Standard ImageFolder layout, two classes:
 
   #+BEGIN_SRC text
   data/Worksite-Safety-Monitoring-Dataset/
@@ -94,12 +66,10 @@
       no_violation/
   #+END_SRC
 
-  The dataset *root* is configured by ~data.root~ in YAML (or via CLI
-  ~--set data.root=PATH~). Subdirectory names (~train_subdir~, ~val_subdir~,
-  ~test_subdir~) are also configurable for unusual layouts.
-
-  ~data.py~ validates the structure on every run and raises a clear error
-  pointing at the missing directory if anything is off.
+  The root path is configured via ~data.root~ in YAML (or
+  ~--set data.root=/some/path~ on the CLI). If the directory or any of
+  the splits are missing, the loader fails with a clear message
+  pointing at the missing folder.
 
 * Installation
 
@@ -107,34 +77,29 @@
   git clone https://github.com/alkhaldieid/site_safety_violation_detector.git
   cd site_safety_violation_detector
 
-  # Recommended: create a clean virtual env
   python -m venv .venv && source .venv/bin/activate
   pip install --upgrade pip
-
-  # Install the package + dependencies. Editable install exposes the
-  # console scripts (safety-train, safety-evaluate, safety-infer,
-  # safety-sweep) and makes local code changes take effect immediately.
   pip install -e ".[dev,plot]"
   #+END_SRC
 
-  Required deps (also in ~requirements.txt~): torch, torchvision, timm,
-  scikit-learn, PyYAML, Pillow, tqdm, numpy. The ~dev~ extra adds
-  pytest / ruff / black; the ~plot~ extra adds matplotlib.
+  ~-e .~ installs the package in editable mode and exposes four
+  console scripts: ~safety-train~, ~safety-evaluate~, ~safety-infer~,
+  ~safety-sweep~. The ~dev~ extra adds pytest and ruff; ~plot~ adds
+  matplotlib.
 
 * Configuration
 
-  All runtime knobs live in YAML files under ~configs/~. The
-  configuration is hierarchical (one dataclass per concern):
+  Configs live in ~configs/~. The fields are grouped by concern:
 
-  - ~data~      — dataset root + split subdirs, image size, batch size, num workers
-  - ~model~     — architecture (any timm name), pretrained, dropout, hidden dim
-  - ~optim~     — optimiser (adam / adamw / sgd), LR, weight decay, scheduler
-  - ~train~     — epochs, early-stopping patience and metric, class-weighting, grad clip
-  - ~eval~      — decision threshold + optional validation-threshold search
-  - ~runtime~   — seed, device (auto / cpu / cuda / mps), output / models dirs, checkpoint name
-  - ~sweep~     — list of candidate architectures, selection metric, tie-breaker
+  - ~data~     dataset paths, image size, batch size, num workers
+  - ~model~    architecture (any timm name), pretrained, dropout, hidden dim
+  - ~optim~    optimizer (adam / adamw / sgd), LR, weight decay, scheduler
+  - ~train~    epochs, early stopping (patience + metric), class weights, grad clip
+  - ~eval~     decision threshold + optional threshold search on validation
+  - ~runtime~  seed, device (auto / cpu / cuda / mps), output directories
+  - ~sweep~    candidate architectures, selection metric, tie-breaker
 
-  Any field is overridable from the CLI without editing YAML:
+  Any field can be overridden from the CLI:
 
   #+BEGIN_SRC bash
   safety-train --config configs/default.yaml \
@@ -143,8 +108,7 @@
                --set runtime.device=cpu
   #+END_SRC
 
-  Overrides are typed: ~true / false / null / int / float / scientific~ are
-  all coerced. Unknown fields fail loudly so typos surface immediately.
+  Unknown fields raise an error instead of being silently ignored.
 
 * Training a single model
 
@@ -153,26 +117,23 @@
                --set data.root=/path/to/Worksite-Safety-Monitoring-Dataset
   #+END_SRC
 
-  This runs the loop in ~src/site_safety_violation_detector/train.py~,
-  saving:
-
-  - ~models/<arch>.pt~                 — the best-epoch checkpoint (state dict
-                                          + class names + image size + threshold)
-  - ~models/<arch>.json~               — sidecar metadata (config, validation metrics,
-                                          parameter count, git commit, timestamp, rationale)
-  - ~reports/<arch>/history.json~      — per-epoch training history (loss + all
-                                          validation metrics + learning rate)
-  - ~reports/<arch>/history.csv~       — same history in CSV form
+  Outputs:
+  - ~models/<arch>.pt~                — best-epoch checkpoint
+  - ~models/<arch>.json~              — sidecar metadata (arch, class names,
+                                         image size, threshold, metrics, config,
+                                         git commit, timestamp)
+  - ~reports/<arch>/history.json~     — per-epoch training history
+  - ~reports/<arch>/history.csv~      — same, as CSV
   - ~reports/<arch>/final_metrics.json~ — best-epoch summary and tuned threshold
-  - ~reports/<arch>/config.yaml~       — resolved config used for the run
+  - ~reports/<arch>/config.yaml~      — the resolved config used for the run
 
-  Early stopping watches ~train.early_stopping_metric~ (~val_f1~ by default,
-  also supports ~val_loss~ and ~val_pr_auc~) with configurable ~patience~.
-  When ~train.use_class_weights~ is true, the positive class weight is
-  computed from the training-set counts and applied via
-  ~BCEWithLogitsLoss(pos_weight=…)~.
+  Early stopping watches ~train.early_stopping_metric~ (default
+  ~val_f1~; also supports ~val_loss~ and ~val_pr_auc~). When
+  ~train.use_class_weights~ is true, the positive class weight is
+  computed from training counts and passed to BCEWithLogitsLoss as
+  ~pos_weight~.
 
-* Training multiple models and selecting the best
+* Training multiple models and picking the best
 
   #+BEGIN_SRC bash
   safety-sweep --config configs/model_sweep.yaml \
@@ -180,24 +141,22 @@
   #+END_SRC
 
   The sweep:
+  1. Builds the train + validation loaders once and reuses them, so
+     every candidate sees the same split.
+  2. Trains each architecture in ~sweep.architectures~.
+  3. Records per-model metrics, parameter count, checkpoint size, and a
+     rough inference latency.
+  4. Writes ~reports/model_comparison.json~ and
+     ~reports/model_comparison.csv~.
+  5. Picks the winner by ~sweep.selection_metric~ (default ~val_f1~)
+     with ~sweep.tie_breaker~ (default ~val_loss~, lower-is-better).
+  6. Copies the winning checkpoint to ~models/best_model.pt~ and writes
+     ~models/best_model_metadata.json~ with the metrics of all
+     candidates and a short note saying which one won and why.
 
-  1. Builds the train / validation dataloaders *once* so every candidate
-     sees the same split (no leakage / no inconsistent batch orders).
-  2. Trains each architecture in ~sweep.architectures~ end-to-end and
-     records per-model metrics, parameter count, on-disk size, and an
-     inference-latency estimate (forward passes on a small batch).
-  3. Writes a side-by-side comparison report to:
-     - ~reports/model_comparison.json~
-     - ~reports/model_comparison.csv~
-  4. Selects the winner by ~sweep.selection_metric~ (default ~val_f1~) with
-     ~sweep.tie_breaker~ (default ~val_loss~, lower-is-better) breaking ties.
-  5. Copies the winning checkpoint to ~models/best_model.pt~ and writes
-     ~models/best_model_metadata.json~ — including the *rationale*
-     ("selected X from N candidates by val_f1=0.…").
-
-  Default candidates: ~efficientnet_b0~, ~resnet50~, ~mobilenetv3_large_100~,
-  ~convnext_tiny~. Override with ~--set sweep.architectures=…~ or edit the
-  config file.
+  Default candidates: ~efficientnet_b0~, ~resnet50~,
+  ~mobilenetv3_large_100~, ~convnext_tiny~. Override the list with
+  ~--set sweep.architectures=...~ or edit the YAML.
 
 * Evaluation
 
@@ -206,18 +165,17 @@
                   --checkpoint models/best_model.pt
   #+END_SRC
 
-  Evaluation:
+  ~safety-evaluate~ loads the checkpoint and its sidecar metadata so
+  the right architecture and image size are used (whether the
+  checkpoint came from ~safety-train~ or ~safety-sweep~). If
+  ~eval.search_threshold_on_val~ is true, the decision threshold is
+  tuned on the validation set first, then the test split is scored
+  with that threshold.
 
-  - Loads the checkpoint *and* its sidecar metadata (~best_model_metadata.json~
-    or ~<stem>.json~) so the right architecture / image size / class names
-    are restored even if the YAML config has drifted.
-  - Optionally re-tunes the decision threshold on the *validation* set
-    (~eval.search_threshold_on_val~) before scoring the *test* set —
-    keeping validation-driven tuning separate from final test scoring.
-  - Writes:
-    - ~reports/<arch>_test/test_metrics.json~
-    - ~reports/<arch>_test/classification_report.txt~  (sklearn report, per-class precision/recall/F1)
-    - ~reports/<arch>_test/confusion_matrix.json~
+  Outputs go under ~reports/<arch>_test/~:
+  - ~test_metrics.json~
+  - ~classification_report.txt~ (sklearn-style)
+  - ~confusion_matrix.json~
 
 * Inference
 
@@ -236,46 +194,33 @@
                --output predictions.csv
   #+END_SRC
 
-  - Preprocessing (image size, normalisation) is reconstructed from the
-    saved metadata so it always matches what the model was trained on.
+  Notes:
+  - Image size and normalisation come from the checkpoint's metadata,
+    so preprocessing matches training.
   - Threshold defaults to the value stored in the checkpoint; override
     with ~--threshold 0.4~.
-  - Corrupt / unreadable images are reported as a row with ~error=…~ rather
-    than crashing the whole batch.
-  - Output options: human-readable lines (default), JSON (~--json~), or
-    CSV / JSON file via ~--output~.
-
-* Output artifacts
-
-  Everything reproducible lives in two directories:
-
-  | Directory      | Contents                                                               |
-  |----------------+------------------------------------------------------------------------|
-  | ~models/~      | ~best_model.pt~, ~best_model_metadata.json~, ~<arch>.pt~, ~<arch>.json~ |
-  | ~reports/~     | per-architecture training history, classification reports,            |
-  |                | confusion matrices, ~model_comparison.{json,csv}~, ~sweep_config.yaml~ |
-
-  Both directories are gitignored except for the ~.gitkeep~ marker so
-  large generated artifacts don't end up in version control.
+  - Broken or unreadable images produce a row with ~error=...~ instead
+    of crashing the whole batch.
+  - Output goes to stdout by default. Use ~--json~ for machine-readable
+    output, or ~--output file.{csv,json}~ to write to disk.
 
 * Tests
-
-  Synthetic-data tests cover config loading, data layout validation,
-  transform shapes, model construction & forward shape (logits, no
-  sigmoid), metric computation, threshold search, inference
-  preprocessing, and checkpoint-metadata round-trips.
 
   #+BEGIN_SRC bash
   pytest
   #+END_SRC
 
-  Tests do *not* require the real dataset and do *not* download pretrained
-  weights (they use ~pretrained=False~). They run in ~< 10 s~ on CPU.
+  Tests use a synthetic ImageFolder dataset created inside a temp
+  directory and ~pretrained=False~ for the timm models, so they do not
+  need the real dataset and do not download anything. They cover the
+  config loader, dataset layout validation, transforms, model
+  construction and forward shape, metric computation, threshold search,
+  inference preprocessing, and checkpoint metadata round-trips.
 
 * Running without installing
 
-  Every console script has a sibling under ~scripts/~ that prepends ~src/~
-  to ~sys.path~ so you can use the pipeline from a fresh checkout:
+  Each console script has a mirror under ~scripts/~ that prepends ~src/~
+  to ~sys.path~, so the pipeline can be used from a fresh checkout:
 
   #+BEGIN_SRC bash
   python scripts/train.py             --config configs/default.yaml
@@ -286,133 +231,98 @@
 
 * Rationale for the Production-Grade Refactor
 
-  The original project trained a single EfficientNet-B0 from a notebook
-  with hard-coded paths, a sigmoid baked into the model, and no
-  reproducibility scaffolding. The refactor addresses each of those
-  weaknesses deliberately.
+  The original code worked but was hard to reuse. A few notes on what
+  changed and why.
 
-** Hard-coded paths were removed
-   The original ~src/evaluate.py~ pointed at
-   ~/data/home/alkhaldieid/repos/site_safety_violation_detector/...~ —
-   that path only existed on one machine. The refactor replaces every
-   such constant with a configurable field. The dataset root, checkpoint
-   names, output directories, image size, and decision threshold all
-   come from YAML (with CLI override), so the same pipeline runs on a
-   laptop, a workstation, or a CI runner without code edits.
+** Hard-coded paths
+   ~src/evaluate.py~ used to point at
+   ~/data/home/alkhaldieid/repos/site_safety_violation_detector/...~,
+   which only existed on one machine. All such paths are now config
+   fields (~data.root~, ~runtime.output_dir~, ~runtime.models_dir~,
+   etc.) so the same code runs anywhere the dataset is.
 
-** YAML configuration was added
-   A single config object captures everything that affects reproducibility:
-   data split locations, batch size, optimizer, learning rate, scheduler,
-   epochs, early-stopping patience, decision threshold, device choice,
-   and the candidate model list. The config is saved next to every run
-   so a year-old result can be re-explained from the artifacts alone.
+** YAML configs
+   I wanted to be able to retrain with different hyperparameters
+   without editing Python. YAML configs do that, and they get copied
+   alongside the run output, so I can tell after the fact what settings
+   produced a given checkpoint.
 
-** ~BCEWithLogitsLoss~ replaced ~Sigmoid~ + ~BCELoss~
-   The original model applied ~Sigmoid~ inside ~forward~ and used
-   ~BCELoss~. That combination is numerically unstable when logits are
-   large (the loss saturates and gradients vanish). PyTorch's
-   ~BCEWithLogitsLoss~ folds the sigmoid into the loss with a
-   log-sum-exp formulation that is stable everywhere. The new model
-   returns *logits*; ~torch.sigmoid~ is applied only when computing
-   probabilities for metrics and inference. This change is invisible to
-   end users but materially affects training stability.
+** BCEWithLogitsLoss instead of Sigmoid + BCELoss
+   The old model applied ~Sigmoid~ inside ~forward~ and then used
+   ~BCELoss~. That combination is numerically unstable when logits get
+   large. ~BCEWithLogitsLoss~ does the same job with a log-sum-exp
+   internally and is stable. The model now returns logits; sigmoid is
+   applied only when computing probabilities for metrics or inference.
 
-** Multiple models are now trained instead of assuming EfficientNet-B0 is best
-   Picking an architecture by reputation is not science. The sweep
-   trains ~efficientnet_b0~, ~resnet50~, ~mobilenetv3_large_100~ and
-   ~convnext_tiny~ on identical splits, then ranks them on the validation
-   set. Whichever architecture happens to *measure* best on this dataset
-   wins, regardless of how popular it is on social media. The candidate
-   list is itself configurable, so future contributors can add modern
-   backbones without touching the selection logic.
+** Training multiple models, not just EfficientNet-B0
+   The original repo assumed EfficientNet-B0 was the right choice. It
+   might be, but I wanted that decided by the data rather than by
+   habit. ~safety-sweep~ trains a few candidates on the same split and
+   keeps whichever one has the best validation F1. The candidate list
+   is editable in the config.
 
-** Validation F1 (with PR-AUC) replaced accuracy as the selection metric
-   Accuracy is misleading whenever the classes are imbalanced — a model
-   that always predicts "no_violation" can look ≥ 70 % accurate while
-   being completely useless. F1 balances precision and recall and is
-   more honest under skew; PR-AUC is available as a threshold-free
-   alternative. The selection metric is configurable
-   (~sweep.selection_metric~) but defaults to ~val_f1~ for this reason.
+** Validation F1 (or PR-AUC) instead of accuracy
+   Accuracy hides class imbalance. If 80% of the images are
+   ~no_violation~, a model that always predicts ~no_violation~ scores
+   80% accuracy and is useless. F1 (or PR-AUC) reflects both precision
+   and recall, so picking by F1 is harder to fool. The selection metric
+   is configurable; F1 is the default.
 
-** Metadata is saved with checkpoints
-   Every checkpoint is paired with a JSON sidecar that captures the
-   architecture, class-name-to-index mapping, image size, validation
-   metrics, parameter count, training config, git commit, timestamp,
-   and (for the sweep winner) a written rationale. This is the
-   difference between "I trained a model" and "I trained *this* model
-   with *these* settings on *that* split". The evaluation and inference
-   code load preprocessing parameters from this metadata so models
-   trained at, say, 256 × 256 are still evaluated at 256 × 256 even if
-   the current config file says otherwise.
+** Checkpoint metadata
+   Every checkpoint is saved with a JSON file next to it containing
+   the architecture, class-to-index mapping, image size, decision
+   threshold, validation metrics, training config, parameter count,
+   git commit, and timestamp. ~safety-evaluate~ and ~safety-infer~ load
+   from this file, so they always use the preprocessing the model was
+   actually trained with.
 
-** Test metrics are reported separately from validation metrics
-   Validation metrics steer training (early stopping, threshold tuning,
-   model selection). Test metrics describe how the chosen model is
-   *expected* to perform on unseen data. Mixing them is the classic way
-   to publish optimistic numbers. The pipeline keeps them separate:
-   thresholds are tuned on validation, then frozen, then applied to the
-   test split for the final report.
+** Test vs validation metrics
+   The validation set is used for early stopping, threshold tuning, and
+   model selection. The test set is only touched at the end, with the
+   threshold already chosen. They are reported in separate files so I
+   don't accidentally tune on test.
 
-** Inference loads preprocessing and class metadata from saved artifacts
-   The same model can be served against multiple deployments; only the
-   metadata file is the source of truth for what the model expects
-   (image size, normalisation, class index ↔ name mapping, decision
-   threshold). ~safety-infer~ reads that file, so the production
-   pipeline cannot silently desynchronise from training.
+** Inference reads metadata
+   The same checkpoint might be used in different places. The image
+   size, normalisation, and class-name mapping all come from the saved
+   metadata, not from a global constant. That way the served model
+   can't silently drift from how it was trained.
 
-** Unit tests matter even for ML projects
-   ML code is not exempt from regressions. The non-ML parts (config
-   parsing, layout validation, transforms, metric math, threshold
-   search, checkpoint sidecar serialisation, image-error handling)
-   absolutely can be tested without GPUs or a real dataset, and they
-   are. The test suite catches typos and contract changes long before
-   they show up as a confused training run.
+** Tests
+   The non-ML parts (config parsing, layout checks, transforms, metric
+   math, threshold search, image-error handling) can be tested without
+   a GPU or the real dataset. They are. A failing test catches typos
+   long before they show up as a confused training run.
 
 * Model Selection Rationale
 
-  This project does *not* pick a model by popularity. It picks one by
-  measurement:
+  The sweep trains each candidate on the same train/validation split
+  with the same loss, optimizer, and scheduler. Each gets the same
+  epoch budget and the same early-stopping policy. After all candidates
+  are trained, the winner is the one with the highest validation F1
+  (ties broken by validation loss).
 
-  1. ~safety-sweep~ trains each candidate architecture
-     (~efficientnet_b0~, ~resnet50~, ~mobilenetv3_large_100~,
-     ~convnext_tiny~ — configurable) on the *same* train / validation
-     split, with the *same* preprocessing, ~BCEWithLogitsLoss~, optimiser
-     and scheduler.
-  2. Each run gets the same epoch budget and early-stopping policy.
-  3. Per-model artifacts are saved (checkpoint, history, parameter count,
-     latency estimate) and aggregated into
-     ~reports/model_comparison.{json,csv}~.
-  4. The winner is the candidate with the highest *validation* F1
-     score, with validation loss resolving ties. The decision is
-     auditable: the rationale (which models were compared, which metric
-     was used, what the winning value was) is written into
-     ~models/best_model_metadata.json~.
-  5. The *test* set is only evaluated after the winner has been
-     selected, so the test metrics are an unbiased final check rather
-     than a tuning signal.
+  The decision is recorded in ~models/best_model_metadata.json~:
+  the metrics of every candidate, the chosen metric, the tie-breaker,
+  and a short rationale string. The test set is only evaluated on the
+  winning model, after selection, so the test metrics are not used to
+  pick the model.
 
-  This makes the selected architecture defensible: "we picked
-  ~efficientnet_b0~ because val_f1 = 0.87 vs. 0.84 / 0.82 / 0.85 for
-  the alternatives, on identical splits, with the same training
-  protocol" — not "everyone uses EfficientNet so we did too".
+  This means the architecture I ship is the one that measured best on
+  this dataset under this protocol — not the one that's most popular.
 
-* Limitations and safety disclaimer
+* Disclaimer
 
-  - The system is a *binary image classifier*. It does not localise
-    violations, identify which piece of safety equipment is missing,
-    or replace a human safety officer.
-  - Real-world deployment requires evaluating on imagery similar to the
-    deployment environment (camera angle, lighting, occlusion). Numbers
-    on the bundled dataset are not a guarantee of field performance.
-  - Decision thresholds should be tuned per deployment to match the
-    desired precision / recall trade-off (a high-recall threshold is
-    appropriate when missing a violation is more costly than a false
-    alarm).
-  - This software is provided "as is", without warranty of any kind.
-    The author is not liable for damage or misuse. *Do not rely on it
-    in safety-critical or regulatory-compliant settings* without
-    independent verification.
+  This is a research / educational project. It classifies whole images
+  as violation vs no_violation; it does not localise violations or
+  identify which piece of equipment is missing, and it is not a
+  substitute for a human safety officer. Performance on the bundled
+  dataset is not a guarantee of field performance: real deployments
+  need evaluation on imagery that matches the deployment environment.
+
+  Provided as-is, without warranty. Use at your own risk, especially in
+  safety-critical or regulatory contexts.
 
 * License
 
-  Released under the MIT License (see ~LICENSE~).
+  MIT (see ~LICENSE~).
