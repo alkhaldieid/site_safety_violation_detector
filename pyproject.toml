@@ -1,0 +1,83 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "site-safety-violation-detector"
+version = "0.2.0"
+description = "Production-grade PyTorch pipeline for detecting safety violations from worksite images."
+readme = { file = "README.org", content-type = "text/plain" }
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Eid Alkhaldi" },
+]
+keywords = ["computer-vision", "pytorch", "timm", "safety", "image-classification"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    "torch>=1.12",
+    "torchvision>=0.13",
+    "timm>=0.9.0",
+    "scikit-learn>=1.1",
+    "numpy>=1.23",
+    "Pillow>=9.0",
+    "PyYAML>=6.0",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4.0",
+    "black>=24.0",
+]
+plot = [
+    "matplotlib>=3.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/alkhaldieid/site_safety_violation_detector"
+Repository = "https://github.com/alkhaldieid/site_safety_violation_detector"
+
+[project.scripts]
+safety-train = "site_safety_violation_detector.train:main"
+safety-evaluate = "site_safety_violation_detector.evaluate:main"
+safety-infer = "site_safety_violation_detector.infer:main"
+safety-sweep = "site_safety_violation_detector.sweep:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+site_safety_violation_detector = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

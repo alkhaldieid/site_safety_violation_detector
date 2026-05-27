@@ -1,0 +1,25 @@
+#+TITLE: Notebooks
+#+OPTIONS: toc:nil num:nil
+
+* Purpose
+
+The notebooks in this directory are *exploratory artifacts only* — they preserve
+the original experimentation that led to the model design but are NOT part of
+the production pipeline.
+
+For reproducible training, evaluation, inference, and multi-model sweeps,
+use the package modules and console scripts:
+
+#+BEGIN_SRC bash
+safety-train      --config configs/default.yaml
+safety-sweep      --config configs/model_sweep.yaml
+safety-evaluate   --config configs/default.yaml --checkpoint models/best_model.pt
+safety-infer      --checkpoint models/best_model.pt --input path/to/image_or_folder
+#+END_SRC
+
+* Files
+  - =1st training.ipynb= — original exploratory training notebook (EfficientNet-B0).
+  - =eff.ipynb=          — additional exploration with EfficientNet.
+
+These notebooks may contain hard-coded paths and one-off cells. Do not rely on
+them for production runs.

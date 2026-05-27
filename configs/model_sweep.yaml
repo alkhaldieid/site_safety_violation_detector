@@ -1,0 +1,53 @@
+# Configuration for the multi-model training sweep.
+# Inherits sensible defaults; override fields as needed when launching:
+#
+#   safety-sweep --config configs/model_sweep.yaml \
+#                --set train.epochs=15 \
+#                --set data.batch_size=64
+
+data:
+  root: data/Worksite-Safety-Monitoring-Dataset
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+  use_weighted_sampler: false
+
+# Per-architecture hyperparameters use these baseline values. The sweep
+# loops over `sweep.architectures` and trains each one with the same data
+# split, then ranks them by `sweep.selection_metric`.
+model:
+  pretrained: true
+  dropout: 0.5
+  hidden_dim: 512
+
+optim:
+  optimizer: adamw
+  learning_rate: 0.0003
+  weight_decay: 0.00001
+  scheduler: cosine
+
+train:
+  epochs: 15
+  early_stopping_patience: 4
+  early_stopping_metric: val_f1
+  use_class_weights: true
+
+eval:
+  threshold: 0.5
+  search_threshold_on_val: true
+
+runtime:
+  seed: 42
+  device: auto
+  output_dir: reports
+  models_dir: models
+
+sweep:
+  architectures:
+    - efficientnet_b0
+    - resnet50
+    - mobilenetv3_large_100
+    - convnext_tiny
+  selection_metric: val_f1
+  tie_breaker: val_loss
+  report_basename: model_comparison

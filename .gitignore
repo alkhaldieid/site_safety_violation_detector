@@ -1,2 +1,42 @@
-data/*
-src/__pycache__/*
+# Datasets
+data/
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+
+# Virtualenv / tooling
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors
+.vscode/
+.idea/
+.DS_Store
+
+# Training artifacts (keep only intentional ones)
+models/*
+!models/.gitkeep
+reports/*
+!reports/.gitkeep
+runs/
+wandb/
+mlruns/
+
+# Logs
+*.log

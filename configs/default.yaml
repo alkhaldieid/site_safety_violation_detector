@@ -1,0 +1,58 @@
+# Default configuration for site_safety_violation_detector.
+# Override any field via the CLI: --set section.field=value (repeatable).
+
+data:
+  root: data/Worksite-Safety-Monitoring-Dataset
+  train_subdir: train
+  val_subdir: valid
+  test_subdir: test
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+  use_weighted_sampler: false
+
+model:
+  architecture: efficientnet_b0   # any timm model name
+  pretrained: true
+  dropout: 0.5
+  hidden_dim: 512
+
+optim:
+  optimizer: adam        # adam | adamw | sgd
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  momentum: 0.9
+  scheduler: cosine      # cosine | step | plateau | none
+  step_size: 10
+  gamma: 0.1
+  warmup_epochs: 0
+
+train:
+  epochs: 25
+  early_stopping_patience: 5
+  early_stopping_metric: val_f1   # val_f1 | val_loss | val_pr_auc
+  use_class_weights: false
+  grad_clip_norm: null
+  log_every: 25
+
+eval:
+  threshold: 0.5
+  search_threshold_on_val: true
+
+runtime:
+  seed: 42
+  device: auto                # auto | cpu | cuda | mps
+  output_dir: reports
+  models_dir: models
+  checkpoint_name: best_model.pt
+  metadata_name: best_model_metadata.json
+
+sweep:
+  architectures:
+    - efficientnet_b0
+    - resnet50
+    - mobilenetv3_large_100
+    - convnext_tiny
+  selection_metric: val_f1
+  tie_breaker: val_loss
+  report_basename: model_comparison
